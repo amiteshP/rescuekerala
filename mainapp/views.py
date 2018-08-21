@@ -129,6 +129,7 @@ def download_ngo_list(request):
     )
     return create_csv_response(filename, header_row, body_rows)
 
+
 class RegisterContributor(CreateView):
     model = Contributor
     fields = ['name', 'district', 'phone', 'address',  'commodities']
@@ -150,6 +151,7 @@ class MapView(TemplateView):
 class ReqSuccess(TemplateView):
     template_name = "mainapp/req_success.html"
 
+
 class RegSuccess(TemplateView):
     template_name = "mainapp/reg_success.html"
 
@@ -161,11 +163,14 @@ class SubmissionSuccess(TemplateView):
 class ContribSuccess(TemplateView):
     template_name = "mainapp/contrib_success.html"
 
+
 class DisclaimerPage(TemplateView):
     template_name = "mainapp/disclaimer.html"
 
+
 class AboutIEEE(TemplateView):
     template_name = "mainapp/aboutieee.html"
+
 
 class DistNeeds(TemplateView):
     template_name = "mainapp/district_needs.html"
@@ -176,6 +181,7 @@ class DistNeeds(TemplateView):
         # Add in a QuerySet of all the books
         context['district_data'] = DistrictNeed.objects.all()
         return context
+
 
 class RescueCampFilter(django_filters.FilterSet):
     class Meta:
@@ -188,14 +194,17 @@ class RescueCampFilter(django_filters.FilterSet):
         if self.data == {}:
             self.queryset = self.queryset.none()
 
+
 def relief_camps(request):
     return render(request,"mainapp/relief_camps.html")
+
 
 def relief_camps_list(request):
     filter = RescueCampFilter(request.GET, queryset=RescueCamp.objects.filter(status='active'))
     relief_camps = filter.qs.annotate(count=Count('person')).order_by('district','name').all()
 
     return render(request, 'mainapp/relief_camps_list.html', {'filter': filter , 'relief_camps' : relief_camps, 'district_chosen' : len(request.GET.get('district') or '')>0 })
+
 
 class RequestFilter(django_filters.FilterSet):
     class Meta:
@@ -225,13 +234,27 @@ class RequestFilter(django_filters.FilterSet):
 
 class VolunteerFilter(django_filters.FilterSet):
     class Meta:
-        model = Request
+        model = Volunteer
+        fields = {
+                    'district' : ['exact'],
+                    'area' : ['exact'],
+                 }
+
+    def __init__(self, *args, **kwargs):
+        super(VolunteerFilter, self).__init__(*args, **kwargs)
+        # at startup user doen't push Submit button, and QueryDict (in data) is empty
+        if self.data == {}:
+            self.queryset = self.queryset.none()
+
+class NGOFilter(django_filters.FilterSet):
+    class Meta:
+        model = NGO
         fields = {
                     'district' : ['exact'],
                  }
 
     def __init__(self, *args, **kwargs):
-        super(VolunteerFilter, self).__init__(*args, **kwargs)
+        super(NGOFilter, self).__init__(*args, **kwargs)
         # at startup user doen't push Submit button, and QueryDict (in data) is empty
         if self.data == {}:
             self.queryset = self.queryset.none()
@@ -246,6 +269,18 @@ def request_list(request):
     req_data.max_page = req_data.number + PAGE_RIGHT
     req_data.lim_page = PAGE_INTERMEDIATE
     return render(request, 'mainapp/request_list.html', {'filter': filter , "data" : req_data })
+
+
+def ngo_list(request):
+    filter = NGOFilter(request.GET, queryset=NGO.objects.all() )
+    ngo_data = filter.qs.order_by('-id')
+    paginator = Paginator(ngo_data, PER_PAGE)
+    page = request.GET.get('page')
+    ngo_data = paginator.get_page(page)
+    ngo_data.min_page = ngo_data.number - PAGE_LEFT
+    ngo_data.max_page = ngo_data.number + PAGE_RIGHT
+    ngo_data.lim_page = PAGE_INTERMEDIATE
+    return render(request, 'mainapp/ngo_list.html', {'filter': filter , "data" : ngo_data })
 
 def request_details(request, request_id=None):
     if not request_id:
@@ -313,7 +348,17 @@ def mapview(request):
     return render(request,"map.html")
 
 def dmodash(request):
-    return render(request , "dmodash.html")
+    camps = 0 ;total_people = 0 ;total_male = 0 ; total_female = 0 ; total_infant = 0 ; total_medical = 0
+
+    for i in RescueCamp.objects.all():
+        camps+=1
+        total_people += ifnonezero(i.total_people)
+        total_male  += ifnonezero(i.total_males)
+        total_female += ifnonezero(i.total_females)
+        total_infant += ifnonezero(i.total_infants)
+        if(i.medical_req.strip() != ""):total_medical+=1 
+
+    return render(request , "dmodash.html",{"camp" :camps , "people" : total_people , "male" : total_male , "female" : total_female , "infant" : total_infant , "medicine" : total_medical})
 
 def dmodist(request):
     d = []
@@ -328,18 +373,23 @@ def dmodist(request):
             total_infant += ifnonezero(i.total_infants)
             if(i.medical_req.strip() != ""):total_medical+=1
 
-        d.append( { "district" : district[1] , "total_camp" : camps , "total_people" : total_people , "total_male" : total_male , "total_female" : total_female , "total_infant" : total_infant , "total_medical" : total_medical   } )    
+        d.append( { "district" : district[1] , "total_camp" : camps , "total_people" : total_people , "total_male" : total_male , "total_female" : total_female , "total_infant" : total_infant , "total_medical" : total_medical   } )
     return render(request , "dmodist.html" , {"camps" : d }  )
 
 def dmotal(request):
+    if(request.GET.get("district",-1) == -1):return render(request , "dmotal.html"  )
+    dist = request.GET.get("district",-1)
+    if(dist == "all"): data = RescueCamp.objects.all().values('taluk').distinct()
+    else:data = RescueCamp.objects.all().filter(district = dist).values('taluk').distinct()
     distmapper = {}
     for i in districts:
         distmapper[i[0]] = i[1]
     d = []
-    for taluk in RescueCamp.objects.all().values('taluk').distinct().order_by('district'):
-        camps = 0 ;total_people = 0 ;total_male = 0 ; total_female = 0 ; total_infant = 0 ; total_medical = 0
-        district = ""
-        for i in RescueCamp.objects.all().filter(taluk = taluk["taluk"]):
+    for taluk in data :
+        camps = 0 ;total_people = 0 ;total_male = 0 ; total_female = 0 ; total_infant = 0 ; total_medical = 0;district = ""
+        if(dist == "all"):RCdata = RescueCamp.objects.all().filter( taluk = taluk["taluk"])
+        else:RCdata = RescueCamp.objects.all().filter( district = dist , taluk = taluk["taluk"]) 
+        for i in RCdata:
             camps+=1
             district = i.district
             total_people += ifnonezero(i.total_people)
@@ -348,7 +398,7 @@ def dmotal(request):
             total_infant += ifnonezero(i.total_infants)
             if(i.medical_req.strip() != ""):total_medical+=1
 
-        d.append( { "district" : distmapper[district] , "taluk" : taluk["taluk"] ,"total_camp" : camps , "total_people" : total_people , "total_male" : total_male , "total_female" : total_female , "total_infant" : total_infant , "total_medical" : total_medical   } )    
+        d.append( { "district" : distmapper[district] , "taluk" : taluk["taluk"] ,"total_camp" : camps , "total_people" : total_people , "total_male" : total_male , "total_female" : total_female , "total_infant" : total_infant , "total_medical" : total_medical   } )
     return render(request , "dmotal.html" , {"camps" : d }  )
 
 
@@ -376,29 +426,21 @@ def ifnonezero(val):
     return val
 
 def dmoinfo(request):
-    if("district" not in request.GET.keys()):return HttpResponseRedirect("/")
-    dist = request.GET.get("district")
-    reqserve = Request.objects.all().filter(status = "sup" , district = dist).count()
-    reqtotal = Request.objects.all().filter(district = dist).count()
-    volcount = Volunteer.objects.all().filter(district = dist).count()
-    conserve = Contributor.objects.all().filter(status = "ful" , district = dist).count()
-    contotal = Contributor.objects.all().filter(district = dist).count()
 
-    camps = RescueCamp.objects.all().filter(district = dist)
+    data = []
+    for i in districts:
+        req = 0 ; reqo = 0 ; reqd = 0 ; con = 0 ; cons = 0 ; vol = 0
+        reqquery = Request.objects.all().filter(district = i[0])
+        req = reqquery.count()
+        reqo = reqquery.filter( status = "pro" ).count()
+        reqd = reqquery.filter(status = "sup").count()
+        contquery = Contributor.objects.all().filter(district = i[0])
+        con = contquery.count()
+        cons =contquery.filter(status = "ful").count()
+        vol = Volunteer.objects.all().filter(district = i[0]).count()
 
-    total_people = 0 ;total_male = 0 ; total_female = 0 ; total_infant = 0 ; total_medical = 0
-
-    for i in camps:
-
-        total_people += ifnonezero(i.total_people)
-        total_male  += ifnonezero(i.total_males)
-        total_female += ifnonezero(i.total_females)
-        total_infant += ifnonezero(i.total_infants)
-        if(i.medical_req.strip() != ""):total_medical+=1
-
-    return render(request ,"dmoinfo.html",{"district" : dist , "reqserve" : reqserve , "reqtotal" : reqtotal , "volcount" : volcount , "conserve" : conserve , "contotal" : contotal ,
-    "total_camps" : camps.count() ,"total_people" : total_people , "total_male" : total_male , "total_female" : total_female , "total_infant" : total_infant , "total_medical" : total_medical    })
-
+        data.append({ "district" : i[1], "req" : req  , "reqo" : reqo , "reqd" : reqd , "con" : con , "cons" : cons , "vol" : vol})
+    return render(request ,"dmoinfo.html",{"data" : data} )
 def error(request):
     error_text = request.GET.get('error_text')
     return render(request , "mainapp/error.html", {"error_text" : error_text})
